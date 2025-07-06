@@ -13,7 +13,7 @@ A Python proof-of-concept implementation of an HTTPS forward proxy with SSL bump
 ## Requirements
 
 - Python 3.7+
-- Dependencies listed in `requirements.txt`
+- Each service (proxy and client) has its own requirements.txt file with only the dependencies it needs.
 
 ## Installation
 
@@ -22,10 +22,31 @@ A Python proof-of-concept implementation of an HTTPS forward proxy with SSL bump
 cd https-proxy-caching-demo
 ```
 
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+2. Install dependencies for each service:
+   - For the proxy server:
+     ```bash
+     cd proxy
+     pip install -r requirements.txt
+     ```
+   - For the client:
+     ```bash
+     cd ../client
+     pip install -r requirements.txt
+     ```
+
+## Dependency Separation
+
+This project uses separate requirements files for the proxy and client services to minimize dependencies and improve maintainability:
+
+- **proxy/requirements.txt** (for the proxy server):
+  ```
+  cryptography>=41.0.0
+  ```
+- **client/requirements.txt** (for the test client):
+  ```
+  requests>=2.31.0
+  urllib3>=1.26.0
+  ```
 
 ## Usage
 
@@ -97,12 +118,15 @@ This will demonstrate:
 
 ```
 https-proxy-caching-demo/
-├── proxy_server.py    # Main proxy server implementation
-├── cert_utils.py      # Certificate generation utilities
-├── cache_utils.py     # Request caching implementation
-├── test_client.py     # Test client to demonstrate functionality
-├── requirements.txt   # Python dependencies
-└── README.md         # This file
+├── proxy/
+│   ├── proxy_server.py    # Main proxy server implementation
+│   ├── cert_utils.py      # Certificate generation utilities
+│   ├── cache_utils.py     # Request caching implementation
+│   ├── requirements.txt   # Proxy dependencies
+├── client/
+│   ├── test_client.py     # Test client to demonstrate functionality
+│   ├── requirements.txt   # Client dependencies
+├── README.md              # This file
 ```
 
 ## Security Considerations
