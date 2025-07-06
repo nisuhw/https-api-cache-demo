@@ -1,0 +1,31 @@
+services:
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+    container_name: https-proxy
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./ca:/app/ca
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8889/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 2s
+
+  client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: https-proxy-test-client
+    depends_on:
+      proxy:
+        condition: service_healthy
+    environment:
+      HTTP_PROXY: http://https-proxy:8888
+      HTTPS_PROXY: http://https-proxy:8888
+    volumes:
+      - ./ca:/app/ca 

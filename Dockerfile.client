@@ -1,0 +1,20 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# For CA trust (Debian/Ubuntu)
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+# The CA cert will be mounted from the shared volume
+VOLUME ["/app/ca"]
+
+# Entrypoint script will handle CA installation and run the test client
+COPY docker-entrypoint-client.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+CMD ["/entrypoint.sh"] 
