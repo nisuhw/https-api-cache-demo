@@ -16,18 +16,30 @@ from cache_utils import RequestCache
 # Configure logging
 logging.basicConfig(
     level=logging.WARNING,
-    format='[%(asctime)s] [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    format="[%(asctime)s] [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
+
 
 class HTTPSProxy:
     """HTTPS forward proxy with SSL bumping and request caching (sequential, blocking)."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8888, cache=None, cache_ttl: int = 5, cache_max_size: int = 10000):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8888,
+        cache=None,
+        cache_ttl: int = 5,
+        cache_max_size: int = 10000,
+    ):
         self.host = host
         self.port = port
         self.ca = CertificateAuthority()
-        self.cache = cache if cache is not None else RequestCache(ttl_seconds=cache_ttl, max_size=cache_max_size)
+        self.cache = (
+            cache
+            if cache is not None
+            else RequestCache(ttl_seconds=cache_ttl, max_size=cache_max_size)
+        )
         # Cache is now internally thread-safe, no need for external lock
 
     def serve_forever(self):
@@ -52,12 +64,12 @@ class HTTPSProxy:
                 t.start()
 
     def handle_client(self, client_sock: socket.socket):
-        client_file = client_sock.makefile('rb')
+        client_file = client_sock.makefile("rb")
         request_line = client_file.readline()
         if not request_line:
             logging.info("Empty request line from client.")
             return
-        request_line = request_line.decode('utf-8').strip()
+        request_line = request_line.decode("utf-8").strip()
         logging.debug(f"Request line: {request_line}")
         parts = request_line.split(" ")
         if len(parts) < 3:
@@ -69,7 +81,7 @@ class HTTPSProxy:
             header_line = client_file.readline()
             if header_line in (b"\r\n", b"\n", b"", None):
                 break
-            header_line = header_line.decode('utf-8').strip()
+            header_line = header_line.decode("utf-8").strip()
             if ":" in header_line:
                 key, value = header_line.split(":", 1)
                 headers[key.strip()] = value.strip()
@@ -89,7 +101,9 @@ class HTTPSProxy:
             target_host = target
             target_port = 443
         logging.debug(f"CONNECT to {target_host}:{target_port}")
-        client_sock.sendall(b"HTTP/1.1 200 Connection Established\r\nProxy-Connection: Keep-Alive\r\n\r\n")
+        client_sock.sendall(
+            b"HTTP/1.1 200 Connection Established\r\nProxy-Connection: Keep-Alive\r\n\r\n"
+        )
         cert_pem, key_pem = self.ca.get_cert_key_paths(target_host)
         with tempfile.NamedTemporaryFile(mode="wb", delete=False) as cert_file:
             cert_file.write(cert_pem)
@@ -105,7 +119,9 @@ class HTTPSProxy:
             self.handle_https_requests(ssl_client_sock, target_host, target_port)
         except ssl.SSLError as e:
             if "EOF occurred in violation of protocol" in str(e):
-                logging.warning(f"Client disconnected during SSL handshake for {target_host}")
+                logging.warning(
+                    f"Client disconnected during SSL handshake for {target_host}"
+                )
             else:
                 logging.error(f"SSL error in CONNECT handler: {e}")
         except Exception as e:
@@ -123,38 +139,66 @@ class HTTPSProxy:
             method, path, version, headers, body = request_data
             url = f"https://{target_host}:{target_port}{path}"
             logging.debug(f"HTTPS {method} {url}")
-            
+
             # Cache is now internally thread-safe
             cached_response = self.cache.get(method, url, headers, body)
             if cached_response:
                 logging.info(f"[CACHE] HIT for {method} {url}")
-                ssl_client_sock.sendall(cached_response["status_line"].encode())
-                for header in cached_response["headers"]:
-                    ssl_client_sock.sendall(header.encode())
-                ssl_client_sock.sendall(b"\r\n")
-                ssl_client_sock.sendall(cached_response["body"])
+                try:
+                    ssl_client_sock.sendall(cached_response["status_line"].encode())
+                    for header in cached_response["headers"]:
+                        ssl_client_sock.sendall(header.encode())
+                    ssl_client_sock.sendall(b"\r\n")
+                    ssl_client_sock.sendall(cached_response["body"])
+                except Exception as e:
+                    logging.error(f"Error sending cached response to client: {e}")
+                    try:
+                        ssl_client_sock.shutdown(socket.SHUT_RDWR)
+                    except Exception:
+                        pass
+                    ssl_client_sock.close()
+                    break
                 continue
             logging.info(f"[CACHE] MISS for {method} {url}")
-            response_data = self.forward_https_request(target_host, target_port, method, path, version, headers, body)
+            response_data = self.forward_https_request(
+                target_host, target_port, method, path, version, headers, body
+            )
             if response_data:
                 logging.debug(f"Forwarded {method} {url} to upstream server.")
-                ssl_client_sock.sendall(response_data["status_line"].encode())
-                for header in response_data["headers"]:
-                    ssl_client_sock.sendall(header.encode())
-                ssl_client_sock.sendall(b"\r\n")
-                ssl_client_sock.sendall(response_data["body"])
-                # Cache is now internally thread-safe
-                self.cache.set(method, url, headers, body, response_data)
+                try:
+                    ssl_client_sock.sendall(response_data["status_line"].encode())
+                    for header in response_data["headers"]:
+                        ssl_client_sock.sendall(header.encode())
+                    ssl_client_sock.sendall(b"\r\n")
+                    ssl_client_sock.sendall(response_data["body"])
+                    # Cache is now internally thread-safe
+                    self.cache.set(method, url, headers, body, response_data)
+                except Exception as e:
+                    logging.error(f"Error sending upstream response to client: {e}")
+                    try:
+                        ssl_client_sock.shutdown(socket.SHUT_RDWR)
+                    except Exception:
+                        pass
+                    ssl_client_sock.close()
+                    break
             else:
-                logging.error(f"Failed to get response from upstream for {method} {url}")
+                logging.error(
+                    f"Failed to get response from upstream for {method} {url}"
+                )
+                try:
+                    ssl_client_sock.shutdown(socket.SHUT_RDWR)
+                except Exception:
+                    pass
+                ssl_client_sock.close()
+                break
 
     def read_http_request(self, sock) -> Optional[Tuple]:
-        file = sock.makefile('rb')
+        file = sock.makefile("rb")
         request_line = file.readline()
         if not request_line:
             logging.debug("Empty HTTPS request line.")
             return None
-        request_line = request_line.decode('utf-8').strip()
+        request_line = request_line.decode("utf-8").strip()
         if not request_line:
             logging.warning("Blank HTTPS request line.")
             return None
@@ -169,7 +213,7 @@ class HTTPSProxy:
             header_line = file.readline()
             if header_line in (b"\r\n", b"\n", b"", None):
                 break
-            header_line = header_line.decode('utf-8').strip()
+            header_line = header_line.decode("utf-8").strip()
             if ":" in header_line:
                 key, value = header_line.split(":", 1)
                 key = key.strip()
@@ -180,32 +224,66 @@ class HTTPSProxy:
         body = b""
         if content_length > 0:
             body = file.read(content_length)
-        logging.debug(f"HTTPS Request: {method} {path} {version}, Headers: {headers}, Body length: {len(body)}")
+        logging.debug(
+            f"HTTPS Request: {method} {path} {version}, Headers: {headers}, Body length: {len(body)}"
+        )
         return method, path, version, headers, body
 
-    def forward_https_request(self, host, port, method, path, version, headers, body) -> Optional[dict]:
+    def forward_https_request(
+        self, host, port, method, path, version, headers, body
+    ) -> Optional[dict]:
         try:
             context = ssl.create_default_context()
             with socket.create_connection((host, port)) as server_sock:
-                with context.wrap_socket(server_sock, server_hostname=host) as ssl_server_sock:
-                    logging.debug(f"Connecting to upstream {host}:{port} for {method} {path}")
+                with context.wrap_socket(
+                    server_sock, server_hostname=host
+                ) as ssl_server_sock:
+                    logging.debug(
+                        f"Connecting to upstream {host}:{port} for {method} {path}"
+                    )
+                    # Prepare headers
+                    connection_header_present = any(
+                        key.lower() == "connection" for key in headers
+                    )
+                    content_length_present = any(
+                        key.lower() == "content-length" for key in headers
+                    )
+                    # Send request line
                     ssl_server_sock.sendall(f"{method} {path} {version}\r\n".encode())
+                    # Send headers (skip proxy-specific)
                     for key, value in headers.items():
                         if key.lower() not in ["proxy-connection", "connection"]:
                             ssl_server_sock.sendall(f"{key}: {value}\r\n".encode())
-                    ssl_server_sock.sendall(b"Connection: close\r\n\r\n")
+                    # Add Connection: close if not present
+                    if not connection_header_present:
+                        ssl_server_sock.sendall(b"Connection: close\r\n")
+                    # For POST/PUT, ensure Content-Length is present and correct
+                    if method in ("POST", "PUT"):
+                        if not content_length_present:
+                            ssl_server_sock.sendall(
+                                f"Content-Length: {len(body) if body else 0}\r\n".encode()
+                            )
+                    ssl_server_sock.sendall(b"\r\n")
+                    # Send body if present
                     if body:
                         ssl_server_sock.sendall(body)
-                    file = ssl_server_sock.makefile('rb')
-                    response_line = file.readline().decode('utf-8').strip()
+                    # Debug: log what was sent upstream
+                    logging.debug(
+                        f"Sent upstream request: {method} {path} {version}, headers: {headers}, body length: {len(body) if body else 0}"
+                    )
+                    # Read response
+                    file = ssl_server_sock.makefile("rb")
+                    response_line = file.readline().decode("utf-8").strip()
                     response_headers = []
                     while True:
                         header_line = file.readline()
                         if header_line in (b"\r\n", b"\n", b"", None):
                             break
-                        response_headers.append(header_line.decode('utf-8').strip())
+                        response_headers.append(header_line.decode("utf-8").strip())
                     response_body = file.read()
-                    logging.debug(f"Upstream response: {response_line}, Headers: {response_headers}, Body length: {len(response_body)}")
+                    logging.debug(
+                        f"Upstream response: {response_line}, Headers: {response_headers}, Body length: {len(response_body)}"
+                    )
                     return {
                         "status_line": response_line + "\r\n",
                         "headers": [h + "\r\n" for h in response_headers],
@@ -217,7 +295,9 @@ class HTTPSProxy:
 
     def handle_http(self, client_sock):
         logging.warning("HTTP request received, only HTTPS CONNECT is supported.")
-        client_sock.sendall(b"HTTP/1.1 501 Not Implemented\r\nContent-Type: text/plain\r\n\r\nThis proxy only supports HTTPS connections via CONNECT method.\r\n")
+        client_sock.sendall(
+            b"HTTP/1.1 501 Not Implemented\r\nContent-Type: text/plain\r\n\r\nThis proxy only supports HTTPS connections via CONNECT method.\r\n"
+        )
 
 
 def healthcheck_server(cache):
@@ -230,7 +310,7 @@ def healthcheck_server(cache):
         while True:
             client_sock, _ = server_sock.accept()
             try:
-                file = client_sock.makefile('rb')
+                file = client_sock.makefile("rb")
                 request_line = file.readline()
                 if request_line:
                     line = request_line.decode().strip()
@@ -238,22 +318,25 @@ def healthcheck_server(cache):
                         stats = cache.stats() if cache else {}
                         logging.info(f"Healthcheck cache stats: {stats}")
                         import json as _json
+
                         stats_json = _json.dumps(stats)
-                        response = (
-                            f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {len(stats_json)}\r\n\r\n{stats_json}"
-                        )
+                        response = f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {len(stats_json)}\r\n\r\n{stats_json}"
                         client_sock.sendall(response.encode())
             except Exception as e:
                 logging.error(f"Healthcheck error: {e}")
             finally:
                 client_sock.close()
 
+
 def main():
     shared_cache = RequestCache(ttl_seconds=5, max_size=10000)
     proxy = HTTPSProxy(host="0.0.0.0", port=8888, cache=shared_cache)
-    health_thread = threading.Thread(target=healthcheck_server, args=(shared_cache,), daemon=True)
+    health_thread = threading.Thread(
+        target=healthcheck_server, args=(shared_cache,), daemon=True
+    )
     health_thread.start()
     proxy.serve_forever()
+
 
 if __name__ == "__main__":
     main()
