@@ -31,6 +31,12 @@ class CertificateAuthority:
 
     def _generate_ca(self):
         """Generate a new CA certificate and private key."""
+        # Remove existing CA certificate and key if they exist
+        if os.path.exists(self.ca_cert_path):
+            os.remove(self.ca_cert_path)
+        if os.path.exists(self.ca_key_path):
+            os.remove(self.ca_key_path)
+
         # Generate private key
         self.ca_key = rsa.generate_private_key(
             public_exponent=65537, key_size=2048, backend=default_backend()

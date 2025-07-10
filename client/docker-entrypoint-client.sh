@@ -10,7 +10,5 @@ else
     echo "[Entrypoint] No CA certificate found at /app/ca/ca.crt"
 fi
 
-export REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/proxy_ca.crt
-
 # Run the test client
 python test_client.py 
